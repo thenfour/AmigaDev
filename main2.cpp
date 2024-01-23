@@ -308,9 +308,10 @@ int main()
         //           c.ToString().str,
         //           d.ToString().str,
         //           e.ToString().str);
+        //auto x = 5_xyz;
 
-        auto a = cc::fixed<5>();
-        auto b = a * 20;
+        // auto a = cc::fixed<5>();
+        // auto b = a * 20;
 
         // auto a = cc::fixed<-5>();
         // auto x = cc::Fixed<3,28,int32_t>{a};
@@ -335,6 +336,7 @@ int main()
 // cc::FixedFromFractionHelper<1,-4,int16_t> helper;
 // auto str = a.ToString();
 // DbgPrintF("%s", str.str);
+    cc::fn();
 
         uint32_t processingLines2 = cc::ReadLineCounter();
         debug_clear();

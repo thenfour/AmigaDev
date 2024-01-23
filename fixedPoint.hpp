@@ -4,30 +4,23 @@
 #include "fixedUtil.hpp"
 
 // TODO: avoid shifting negative values everywhere.
+// TODO: fractions in UDL
 // TODO: write mutating opeprators
 // TODO: write fns and operators accepting runtime int & float params.
 // TODO: write tests.
-// TODO: "unit type" is pretty much universally broken. there are several issues:
-// 1. checking for unit type is not correct. unit types are NOT fully-saturated types.
-//    example: the sine wave fn, takes a "unit type" in the LUT, and then does a bit of math,
-//    and the result is a new datatype not fully saturated, losing all concept of "unit type".
-//    that needs to be considered specially for all cases. how to preserve that concept etc.
-// 2. it's ambiguous how to actually handle unit types for many operations. simple example:
-//    Q15 + Q15 = ??? Q30. both addends are unit types, and the result would be Q30 with a value of...
-//    two? which is not really possible. Another ambiguity: is 0xff = 1 a special case, or is 0xff a SCALE, affecting scaling of all values?
-// 3. also ambiguous how to handle for example negative vs. positive scaling. in audio contexts,
-//    in general positive & negative scales are exactly the same for simplicity, and to prevent tiny
-//    amounts of distortion due to asymmetry in the waveform.
 
 /*
 
 Usage:
 
-auto x = MakeFixed<16>(); // make fixed from integer
-auto x = MakeFixed<3.2>(); // make fixed from floating point literal
-auto x = MakeFixed<9, 3>(); // make fixed from fraction.
-auto x = Fixed<2,2>(); // specify int & fract bits. remaining bits considered unused.
-
+auto x = fixed<16>(); // make fixed from integer
+auto x = fixed<3.2>(); // make fixed from floating point literal
+auto x = fixed<9, 3>(); // make fixed from fraction.
+auto x = Fract<2,2>(); // specify int & fract bits. remaining bits considered unused.
+auto x = Fract<2,2>::FromNumber(...); // specify int & fract bits. remaining bits considered unused.
+auto x = "24"_fp; // UDL converts integers
+auto x = "-12.45"_fp; // UDL converts numbers
+auto x = "-12.45"_fp8; // UDL can specify base type. _fp16, _fp32
 
 See another very similar impl: https://github.com/eteran/cpp-utilities/blob/master/fixed/include/cpp-utilities/fixed.h
 it's actually so extremely similar, it's a nice affirmation of my design.
@@ -38,7 +31,6 @@ template <size_t I1, size_t I2, size_t F>
 CONSTEXPR14 typename std::conditional<I1 >= I2, fixed<I1, F>, fixed<I2, F>>::type operator*(fixed<I1, F> lhs, fixed<I2, F> rhs) {
     - both operands have the same fractional bits.
     - in fact, all Fixed<> values require full saturation of the type.
-    - no concept of "unit type" is supported
 
 also there are some implementations that work without promotion for divide & multiplication which could be handy.
 
@@ -110,9 +102,10 @@ SOLUTION:
 
 */
 
-// A fixed-point library specifically optimized for ARM Cortex M7 (Teensy).
+// A fixed-point library.
+
 // Don't want to lock ourselves into specific fixed point types like Q15, Q31, Q32.
-// This library aims to be fluid about the FP type, in order to allow the compiler to fully
+// This library aims to be fluid about the FP format, in order to allow the compiler to fully
 // optimize chained operations so intermediate datatypes are optimal, reducing the amount
 // of shifting and precision loss.
 
@@ -120,78 +113,30 @@ SOLUTION:
 // how operations are performed, which datatypes to select, and which precision levels are
 // required.
 //
-// So the point of this class is to make calling code more expressive about its intent
-// (kinda the goal of any abstracting class). But the caller can't completely ignore what's
-// going on behind the scenes. The caller needs to be wary of avoiding certain pitfalls
-// like how chaining operations "wants" to result in a never-ending increase of data type
-// width.
+// This library aims to make calling code more expressive and less filled with obscene shifting
+// and masking, but the caller still has responsibility for managing precision.
 
-// Some notes about performance on Teensy:
-// #1 rule: 64-bit division is expensive. It's so slow that converting to double, dividing,
-//          and converting back is twice as fast. Never ever do it. There's no hardware
-//          instruction for it so it's basically emulated in software.
-// #2 rule: 32-bit values are the fastest. 8 and 16 bit are fast but still not as fast as
-//          32-bit, and because we want to reduce the amount of conversions, we should
-//          gravitate towards 32-bit and nothing else.
+// in order to optimize precision, callers must specify integral bits + fractional bits.
+// this allows left-shifting when more precision is demanded by temp values, retaining as much
+// precision as possible.
+
+// in general CPUs will have a very performant base type (usually register sized), and then
+// a VERY badly performing larger types which may use microcode etc and be like 100x slower.
+// so base type can often auto-selected here, but largely it's the caller's responsibility
+// to manage base type.
 //
-// Some other notes:
-// - Signed does not affect performance.
+// GUIDELINES for callers:
+// - use auto and pray your IDE can reveal the type
+// - keep intbits as small as possible when you know the max value. every bit wasted here is at least bit of precision lost during ops.
+//
+// Performance testing on teensy shows a couple fun facts:
+// - Signed vs. unsigned are exactly the same performance on all ops
 // - Inline assembly does not help. Even with the ummul instruction. It forces the compiler
 //   to rearrange how it does things, set up registers in a certain way, and loses performance.
 // - 64-bit ops are about >5x slower than 32 in general
 // - 32-bit all ops are blazing fast; effectively free. Except division (& mod) is twice as slow.
 // - 8 and 16 bit are about ~3x slower than 32.
 // - conversion to and from 32-bit is not free; it's about on par with other arith ops.
-
-// With that in mind, some comments that drive design.
-// - Favor staying in 32-bit types. Don't try to stay in 8 or 16 bits; they are slower.
-//   1) to avoid converting
-//   2) because it's fastest by far.
-// - *Strongly* avoid 64-bit types.
-//
-// Therefore, by default everything will be done within 32-bit types unless callers explicitly
-// request maximum precision.
-//
-// We want to try and optimize for chained operations. Many FP libraries want to always
-// convert back to the input type, for each operation. Let's not do that; ops will return the
-// optimal format, to either be converted later to the type you want (no slower than baking it
-// into the op), or ready to be optimally input to the next operation in the expression.
-//
-// Callers must specify integral bits + fractional bits.
-// If callers do not specify that, then it would be impossible to retain reasonable
-// precision without using 64-bit intermediate types. For staying in 32-bit types, we must
-// almost always right-shift before multiplying. How much to shift depends on the *total width*
-// of the value.
-// Imagine multiplying A: 16.16 by 16.16, versus B: 0.16 by 0.16.
-// In A, both should be shifted right 16 bits first, then multiplied to use the 32-bit space.
-//       any less and you'll likely overflow.
-// In B, both should not be shifted at all because we know there's enough overhead.
-//       If you were to shift right 16, the value would always be 0.
-// Therefore specifying intbits is absolutely necessary.
-//
-// Another way to see that reasoning: Because we are gravitating towards 32-bit datatypes
-// always, we differ from most FP libraries. FP libraries assume datatypes saturate the
-// type width. That works when you're constantly converting back to the smaller type
-// (and therefore have space to use 32-bit temps). But since we stay in 32-bit land,
-// even for narrow values, we need to know how much overhead is remaining to continue
-// shifting optimally.
-
-// And another way: If we DONT use intbits, we will need to use slower intermediate values,
-// either needlessly converting back to int16, or needlessly converting between int64.
-
-// Considering signedness does not affect performance, we can therefore assume
-// the datatype is int32 when intbits+fractbits < 32
-
-// It would be slightly better than just assuming intbits is the full width; it would
-// immply that we convert back to an input type. We'd have to select type A or B, which
-// imo would be no less confusing than supplying intbits where things are optimal.
-
-// Note that we don't promote to 64-bit even if the operation requires it. Caller
-// would need to specify to do it.
-
-// COMPILE-TIME OPTIONS:
-// FP_CACHE_DOUBLE
-// FP_RUNTIME_CHECKS
 
 namespace cc
 {
@@ -269,7 +214,7 @@ namespace cc
 
         static constexpr BaseType gPositiveOne = BaseType(1ULL << std::min<uint8_t>(TypeInfo::AvailableBits - 1, kFractBits));
 
-        static constexpr BaseType mFractMask = FillBits<kFractBits>();
+        static constexpr typename TypeInfo::UnsignedEquivalent mFractMask = FillBits<kFractBits>();
         static constexpr BaseType mRemoveSignMask = FillBits<TypeInfo::AvailableBits>();
 
         using CorrespondingSignedBaseType = typename TypeInfo::SignedEquivalent;
@@ -360,7 +305,7 @@ namespace cc
             operator const char *() const { return str; }
         };
 
-        Str<40> ToString(uint8_t maxDecimals = 5)
+        Str<40> ToString(uint8_t maxDecimals = 5) const
         {
             Str<40> ret;
             // regarding negative numbers-- there's no negative zero, so we need to handle sign bit specially.
@@ -874,8 +819,7 @@ namespace cc
         constexpr CL_NODISCARD MyT Fract() const
         {
             // Extract the fractional part directly from mValue
-            // return MyT{static_cast<BaseType>(FPAbs(mValue) & mFractMask)};
-            return MyT{static_cast<BaseType>(FPAbs(mValue)) & mFractMask};
+            return MyT{static_cast<typename TypeInfo::UnsignedEquivalent>(FPAbs(mValue)) & mFractMask};
         }
 
         // does not compute a return type; modifies own value.
@@ -1216,8 +1160,6 @@ namespace cc
         // Calculates square root of a unit value. In other words, it cannot do sqrt of anything outside of [0,1)
         // TRUNCATES any integer part.
         // TRUNCATES sign bit.
-        // i considered only enabling this for unit types, but better to just give a clear name that's not a generic
-        // sqrt.
         inline constexpr Fixed<0, 16, uint16_t> SqrtUnit() const
         {
             auto t = Fixed<0, 32, uint32_t>{*this};
@@ -1376,6 +1318,158 @@ namespace cc
     {
         using ReturnType = Fixed<0, 16, uint16_t>;
         return ReturnType::FromUnderlyingValue(sqrt_Q32_to_Q16(x.mValue));
+    }
+
+    // it would be nice (but not possible) to deduce the types during parsing the int, but because of syntax limitations
+    // it's not possible. simply: the string is a param pack, and deduction would require more template params which i can't do.
+    // fortunately at compile-time int64 is ok. just not at runtime.
+
+    // var template args are so awkward to work with; for parsing i cannot use a call-and-return thing like,
+    // while(chars left ) { if (next token is a number) parseNumber else ...
+    // because of how the var args are passed around, i have to do everything in sequence chain.
+    // parseNumber() needs to forward to the next phase.
+
+    template <typename BaseType, char... chars>
+    struct staticCharsToIntHelper
+    {
+        using max_int_t = int64_t; // don't use unsigned even for values with no signbit, to simplify narrowing.
+        static constexpr int8_t kMaxUnsignedIntAvailableBits = 63;
+
+        struct parse_int_result
+        {
+            max_int_t kIntValue; // always non-negative.
+            int kSignBit;
+            max_int_t kFractValue; // always non-negative.
+            max_int_t kFractScale; // for parsing decimal parts, this is the denominator part. so parsing the "025" part of 0.025 results in a scale of 1000. (25/1000)
+        };
+
+        enum class ParsePhase
+        {
+            NumInt,
+            NumFract,
+        };
+
+        template <
+            ParsePhase Tphase,
+            max_int_t TcompletedIntPart, // result storage
+            // accumulation state
+            max_int_t Taccumulator,
+            max_int_t Tscale,
+            int TsignBit,
+            char head, char... tail //
+            >
+        static constexpr auto parse_signed_number()
+        {
+            constexpr bool headIsDigit = (head >= '0' && head <= '9');
+            constexpr auto headAsDigit = head - '0';
+
+            if constexpr (head == '-')
+            {
+                static_assert(TsignBit == 1, "parse error; multiple negative signs?");
+                return parse_signed_number<Tphase, TcompletedIntPart, Taccumulator, Tscale, -TsignBit, tail...>();
+            }
+
+            constexpr auto nextAccumulator = headIsDigit ? (Taccumulator * 10 + headAsDigit) : Taccumulator;
+            constexpr auto nextScale = headIsDigit ? (Tscale * 10) : Tscale;
+
+            if constexpr (head == '.')
+            {
+                // we are finished parsing the int part.
+                return parse_signed_number<ParsePhase::NumFract,
+                                        nextAccumulator, // set TcompletedIntPart
+                                        0, 1, 1, tail...>();
+            }
+            constexpr bool moreToParse = (sizeof...(tail) > 0);
+            if constexpr (moreToParse)
+            {
+                return parse_signed_number<Tphase, TcompletedIntPart, nextAccumulator, nextScale, TsignBit, tail...>();
+            }
+
+            if constexpr (Tphase == ParsePhase::NumFract)
+            {
+                // the accumulator is the fractional part, scale is useful.
+                return parse_int_result{TcompletedIntPart, TsignBit, nextAccumulator, nextScale};
+            }
+
+            return parse_int_result{nextAccumulator, TsignBit, 0, 1};
+        }
+
+        static constexpr auto ParseResult = parse_signed_number<ParsePhase::NumInt, 0, 0, 1, 1, chars...>();
+        static constexpr int8_t kResultIntBits = StaticValueBitsNeeded<ParseResult.kIntValue>::value;
+        static constexpr bool kIsSigned = (ParseResult.kSignBit < 0);
+        static constexpr bool kHasFractPart = ParseResult.kFractValue != 0;
+        using TypeInfo = FPTypeInfo<BaseType>;
+        static constexpr int8_t kResultFractBits = kHasFractPart ? (TypeInfo::AvailableBits - kResultIntBits) : 0; // fill all bits with fract if it exists.
+        // generate the fract part:
+        // - make it as huge as possible in uint64_t
+        // - divide by the scale
+        // - convert to dest format & add to result.
+        static constexpr int8_t kFractPartScaleBitsNeeded = StaticValueBitsNeeded<ParseResult.kFractScale>::value;
+        static constexpr int8_t kFractTempAvailableBits = kMaxUnsignedIntAvailableBits;
+        static constexpr int8_t kFractShift = kFractTempAvailableBits - kFractPartScaleBitsNeeded;
+        static constexpr max_int_t kTempFractHuge = ParseResult.kFractValue << kFractShift;
+        static constexpr max_int_t kTempFractDivided = kTempFractHuge / ParseResult.kFractScale;
+        static constexpr int8_t kTempFractCorrectionShift = kResultFractBits - kFractShift;
+        static constexpr BaseType kIntUnderlyingValue = (ParseResult.kIntValue << kResultFractBits) * ParseResult.kSignBit;
+        static constexpr BaseType kFractUnderlyingValue = BaseType(const_shift<kTempFractCorrectionShift>(kTempFractDivided));
+        using FixedType = Fixed<kResultIntBits, kResultFractBits, BaseType>;
+
+        static constexpr auto FixedValue = FixedType::FromUnderlyingValue(kIntUnderlyingValue + kFractUnderlyingValue);
+
+        // this is here for debugging; a compile-time double representation of the parsed value.
+        static constexpr double kDoubleValue = double(kIntUnderlyingValue + kFractUnderlyingValue) / (1 << kResultFractBits);
+    };
+
+    template <typename T, T... chars>
+    static constexpr auto operator""_fp()
+    {
+        using helper = staticCharsToIntHelper<FPGeneralBaseType, chars...>;
+        return helper::FixedValue;
+    }
+
+    template <typename T, T... chars>
+    static constexpr auto operator""_fp8()
+    {
+        using helper = staticCharsToIntHelper<int8_t, chars...>;
+        return helper::FixedValue;
+    }
+
+    template <typename T, T... chars>
+    static constexpr auto operator""_fp16()
+    {
+        using helper = staticCharsToIntHelper<int16_t, chars...>;
+        return helper::FixedValue;
+    }
+
+    template <typename T, T... chars>
+    static constexpr auto operator""_fp32()
+    {
+        using helper = staticCharsToIntHelper<int32_t, chars...>;
+        return helper::FixedValue;
+    }
+
+    void fn()
+    {
+
+        // constexpr auto x = staticCharsToIntHelper<'1', '6'>::kSignedIntValue;
+        // constexpr auto y = staticCharsToIntHelper<'1', '0', '0', '0'>::kSignedIntValue;
+
+         using point325 = staticCharsToIntHelper<uint32_t, '3', '.', '2', '5'>;
+         constexpr auto y1 = point325::kDoubleValue;
+        // constexpr auto y3 = point325::ParseResult.kFractValue;
+        // constexpr auto y2 = point325::ParseResult.kFractScale;
+        // constexpr auto y5 = point325::FixedValue;
+        constexpr auto xa = "-19.387987987"_fp32;
+        DbgPrintF("%s", xa.ToString().str);
+
+        //constexpr auto b = "12"_fp;
+        //constexpr auto c = "-123.45"_fp;
+        // constexpr auto x0 = "-6"_fp;
+        // constexpr auto ao = "-65"_fp;
+        // constexpr auto eu = " - 653"_fp;
+        // constexpr auto e4 = "-6530"_fp;
+
+        DbgPrintF("%d", 1);
     }
 
 } // namespace clarinoid

@@ -5,6 +5,8 @@
 // configuration
 #define FIXED_ALLOW_INT64 FALSE
 #define FIXED_ALLOW_RUNTIME_FLOAT FALSE
+// for UDL, we need to make a best guess at a base type.
+using FPGeneralBaseType = int16_t;
 
 namespace cc
 {
@@ -78,24 +80,24 @@ namespace cc
         return n;
     }
 
-    template <int32_t i>
+    template <int64_t i>
     struct StaticAbs
     {
-        static constexpr int32_t value = i < 0 ? -i : i;
+        static constexpr int64_t value = i < 0 ? -i : i;
     };
 
-    template <int32_t i>
+    template <int64_t i>
     struct StaticValueBitsNeeded
     {
-        static constexpr int32_t value_allow_zero = 1 + StaticValueBitsNeeded<(StaticAbs<i>::value >> 1)>::value_allow_zero;
-        static constexpr int32_t value = value_allow_zero;
+        static constexpr int8_t value_allow_zero = 1 + StaticValueBitsNeeded<(StaticAbs<i>::value >> 1)>::value_allow_zero;
+        static constexpr int8_t value = value_allow_zero;
     };
 
     template <>
     struct StaticValueBitsNeeded<0>
     {
-        static constexpr int32_t value = 1;
-        static constexpr int32_t value_allow_zero = 0;
+        static constexpr int8_t value = 1;
+        static constexpr int8_t value_allow_zero = 0;
     };
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -294,6 +296,25 @@ namespace cc
     // selects datatype that can hold the given # of bits
     template <uint8_t valueBits, bool isSigned>
     using FPAutoBaseType = typename std::conditional<isSigned, FPAutoBaseTypeSigned<valueBits>, FPAutoBaseTypeUnsigned<valueBits>>::type;
+
+    // ///////////////////////////////////////////////////////////////////////////////////////////////////
+    // template<typename T>
+    // static constexpr uint8_t FPValueBitsNeeded(T val)
+    // {
+    //     if constexpr (val < 0)
+    //     {
+    //         if (val >= FPTypeInfo<int8_t>::NegativeUnitScale)
+    //             return FPTypeInfo<int8_t>::AvailableBits;
+    //         if (val >= FPTypeInfo<int16_t>::NegativeUnitScale)
+    //             return FPTypeInfo<int16_t>::AvailableBits;
+    //         return FPTypeInfo<int32_t>::AvailableBits;
+    //     }
+    //     if (val <= FPTypeInfo<int8_t>::PositiveUnitScale)
+    //         return FPTypeInfo<int8_t>::AvailableBits;
+    //     if (val <= FPTypeInfo<int16_t>::PositiveUnitScale)
+    //         return FPTypeInfo<int16_t>::AvailableBits;
+    //     return FPTypeInfo<int32_t>::AvailableBits;
+    // }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
     template <uint8_t bits, typename T = FPAutoBaseType<bits, false>>

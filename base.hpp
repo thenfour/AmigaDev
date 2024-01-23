@@ -13,6 +13,9 @@ using uint16_t = USHORT;
 using int16_t = SHORT;
 using uint32_t = ULONG;
 using int32_t = LONG;
+using uint64_t = unsigned long long ;
+using int64_t = long long;
+
 using uintptr_t = uint32_t;
 using size_t = long unsigned int;
 
