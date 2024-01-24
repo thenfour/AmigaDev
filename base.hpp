@@ -13,7 +13,7 @@ using uint16_t = USHORT;
 using int16_t = SHORT;
 using uint32_t = ULONG;
 using int32_t = LONG;
-using uint64_t = unsigned long long ;
+using uint64_t = unsigned long long;
 using int64_t = long long;
 
 using uintptr_t = uint32_t;
@@ -404,11 +404,16 @@ namespace std
     {
     };
 
+    template <typename T>
+    inline constexpr bool is_signed_v = is_signed<T>::value;
+
     // Implementation of is_unsigned
     template <typename T>
     struct is_unsigned : integral_constant<bool, is_arithmetic<T>::value && T(0) < T(-1)>
     {
     };
+    template <typename T>
+    inline constexpr bool is_unsigned_v = is_unsigned<T>::value;
 
     // Custom implementation of convertible_to type trait
     template <typename From, typename To>
@@ -561,5 +566,10 @@ namespace cc
             }
         }
     };
+
+    static constexpr bool isPowerOfTwo(int value)
+    {
+        return value != 0 && (value & (value - 1)) == 0;
+    }
 
 } // namespace cc

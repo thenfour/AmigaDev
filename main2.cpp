@@ -263,7 +263,7 @@ int main()
     {
         uint32_t processingLines = cc::ReadLineCounter();
 
-        // // whole screen clear
+        // whole screen clear
         // cc::Blitter::BlitDupe(backgroundImage, offscreenSurface);
         // offscreenSurface.mDirtyRect.MarkAsClean();
 
@@ -273,20 +273,35 @@ int main()
         // cc::Blitter::BlitMasked<0, 0, 64, 64>(spritesWithMask, offscreenSurface, offscreenSurface, 320 / 2 - 32, 256 / 2 - 32);
 
         {
-            auto t = cc::Fixed<8, 8, uint16_t>::FromUnderlyingValue((gFrameCounter * 3) & 0xff);
-            auto s = t.Sine16_2pi();
-            auto sh = s.Multiply(cc::Fixed<8, 8, uint16_t>::FromNumber(320 / 6));
+            auto t = cc::Fixed<8, 8, uint16_t>::FromUnderlyingValue((gFrameCounter * 1) & 0xff);
+            auto ssnth = t.Sine_2pi();
+            auto sh = ssnth.Multiply(cc::Fixed<8, 8, uint16_t>::FromNumber(320 / 2));
 
-            auto ty = cc::Fixed<8, 8, uint16_t>::FromUnderlyingValue((gFrameCounter * 9 / 2) & 0xff);
-            auto sy = ty.Sine16_2pi();
-            auto shy = sy.Multiply(cc::Fixed<8, 8, uint16_t>::FromNumber(256 / 6));
+            auto ty = cc::Fixed<8, 8, uint16_t>::FromUnderlyingValue((gFrameCounter * 7 / 2) & 0xff);
+            auto sy = ty.Sine_2pi();
+            auto shy = sy.Multiply(cc::Fixed<8, 8, uint16_t>::FromNumber(256 / 2));
 
             cc::Blitter::BlitMasked<0, 0, 64, 64>(spritesWithMask, offscreenSurface, offscreenSurface, 320 / 2 + sh.IntPart() - 32, 256 / 2 + shy.IntPart() - 32);
         }
+
+        {
+            auto t = cc::Fixed<8, 8, uint16_t>::FromUnderlyingValue((gFrameCounter * 2) & 0xff);
+            auto s = t.Sine_2pi();
+            auto sh = s.Multiply(cc::Fixed<8, 8, uint16_t>::FromNumber(320 / 3));
+
+            auto ty = cc::Fixed<8, 8, uint16_t>::FromUnderlyingValue((gFrameCounter * 5 / 2) & 0xff);
+            auto sy = ty.Sine_2pi();
+            auto shy = sy.Multiply(cc::Fixed<8, 8, uint16_t>::FromNumber(256 / 3));
+
+            cc::Blitter::BlitMasked<0, 0, 64, 64>(spritesWithMask, offscreenSurface, offscreenSurface, 320 / 2 + sh.IntPart() - 32, 256 / 2 + shy.IntPart() - 32);
+        }
+
         int16_t dirtyX = offscreenSurface.mDirtyRect.GetDirtyRectStartXPixel();
         int16_t dirtyY = offscreenSurface.mDirtyRect.mDirtyRectStartY;
         int16_t dirtyW = offscreenSurface.mDirtyRect.GetDirtyRectWidthPixels();
         int16_t dirtyH = offscreenSurface.mDirtyRect.GetDirtyRectHeightLines();
+
+        uint32_t processingLines2 = cc::ReadLineCounter();
 
         AmigaApp::WaitVbl();
         mouse.OnFrame();
@@ -297,54 +312,12 @@ int main()
         cc::Blitter::BlitDirtyRect(offscreenSurface, backgroundSurface);
         // cc::Blitter::BlitDupe(offscreenSurface, backgroundSurface);aoeu
 
-        // auto a = cc::fixed<5>();
-        // auto b = cc::fixed<3>();
-        // auto c = cc::fixed<-3, int32_t>();
-        // auto d = (a + b);
-        // auto e = d / c;
-        // DbgPrintF("a=%s b=%s c=%s, d=%s e=%s",
-        //           a.ToString().str,
-        //           b.ToString().str,
-        //           c.ToString().str,
-        //           d.ToString().str,
-        //           e.ToString().str);
-        //auto x = 5_xyz;
-
-        // auto a = cc::fixed<5>();
-        // auto b = a * 20;
-
-        // auto a = cc::fixed<-5>();
-        // auto x = cc::Fixed<3,28,int32_t>{a};
-        // auto c = cc::fixed<3, int32_t>();
-        // auto e = a / c;
-        // auto f = e.Abs();
-        // int16_t xxx = 8192;
-        // cc::FixedFromFractionHelper<1,2,int16_t> helper;
-        // cc::FixedFromFractionHelper<1,-2,int16_t> helperneg;
-        // auto r = cc::fixed<-1,2, int16_t>();
-        // auto str = r.ToString();
-        // DbgPrintF("r=%s",
-        //           str.str);
-        // DbgPrintF("a=%s x=%s c=%s, e=%s f=%s",
-        //           a.ToString().str,
-        //           x.ToString().str,
-        //           c.ToString().str,
-        //           e.ToString().str,
-        //           f.ToString().str);
-
-// auto a = cc::fixed<1,-4, int16_t>();
-// cc::FixedFromFractionHelper<1,-4,int16_t> helper;
-// auto str = a.ToString();
-// DbgPrintF("%s", str.str);
-    cc::fn();
-
-        uint32_t processingLines2 = cc::ReadLineCounter();
         debug_clear();
         debug_filled_rect(0, 0, 400, 60, 0x80004444); // 0x00RRGGBB
         debug_text_format(20, 30, 0x00cc6600, "frameSpan:%d, lineDelta:%d, mouse:(%d,%d)", frameSpan, processingLines2 - processingLines, mouse.mPointerX, mouse.mPointerY);
         debug_text_format(20, 50, 0x00cc6600, "offscrDirty:(%d,%d)[%d x %d]", dirtyX, dirtyY, dirtyW, dirtyH);
         // debug_text_format(20, 70, 0x00cc6600, "5/3 = %s", ft.str);
-        debug_rect(dirtyX * 2 + 72, dirtyY * 2 + 36, (dirtyX + dirtyW) * 2 + 72, (dirtyY + dirtyH) * 2 + 36, 0xff0000);
+        //debug_rect(dirtyX * 2 + 72, dirtyY * 2 + 36, (dirtyX + dirtyW) * 2 + 72, (dirtyY + dirtyH) * 2 + 36, 0xff0000);
     }
 
     p61End();
